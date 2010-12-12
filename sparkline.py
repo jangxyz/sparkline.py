@@ -1,25 +1,29 @@
+#!/usr/bin/python
 
-"""spark.py
-A python module for generating sparklines.
-Requires the Python Imaging Library 
+"""
+    sparkline.py
+
+        A python module for generating sparklines.
+        Requires the Python Imaging Library 
+
+    NOTE:
+        this module is a rewrite of Joe Gregorio and Matthew Perry's code, 
+        (see http://www.perrygeo.net/wordpress/?p=64)
+        hence inherits the license and the version, 
+        in a more code style of jquery.sparkline.
+        (see http://omnipotent.net/jquery.sparkline/)
+
 """
 
-__author__ = "Joe Gregorio (joe@bitworking.org), Matthew Perry (perrygeo@gmail.com"
-__copyright__ = "Copyright 2005, Joe Gregorio"
-__contributors__ = ['Alan Powell, Matthew Perry']
-__version__ = "0.1"
+__author__ = "Janghwan Kim (janghwan@gmail.com)"
+__copyright__ = "Copyright 2010, Janghwan Kim"
+__contributors__ = ['Joe Gregorio', 'Matthew Perry', 'Alan Powell']
+__version__ = "0.2"
 __license__ = "MIT"
-__history__ = """
-
-20070510 abstracted functions away from cgi-specific arg objects (MTP)
-
-"""
 
 import Image, ImageDraw
-import types
-from collections import Sequence as SequenceTypes
+from collections import Sequence
 import re
-
 
 
 class Canvas:
@@ -32,17 +36,17 @@ class Canvas:
         # set default common options
         opt = defaults.common.copy().merge(**options)
 
+        if self.image is not None:
+            if 'width'  not in options: opt['width']  = self.image.size[0]
+            if 'height' not in options: opt['height'] = self.image.size[1]
+
         chart = self.find_chart(data, opt)
+        opt = chart.resolve_options(data, opt)
 
         # determine canvas size and resolve options
         if self.image is None:
-            opt = chart.resolve_options(data, opt)
             canvas_size = chart.get_canvas_size(data, opt)
             self.image = Image.new("RGB", canvas_size, 'white')
-        else:
-            if 'width'  not in options: opt['width']  = self.image.size[0]
-            if 'height' not in options: opt['height'] = self.image.size[1]
-            opt = chart.resolve_options(data, opt)
 
         # now draw
         chart.draw(data, self.image, opt)
@@ -55,10 +59,9 @@ class Canvas:
                 chart_name = chart_name.title() + "Chart"
 
         chart = globals().get(chart_name, defaults.common.type)(data, opt)
-        print opt, chart_name, chart
         return chart
 
-    def save(output, ext="PNG"):
+    def save(self, output, ext="PNG"):
         self.image.save(output, ext)
         return output
 
@@ -80,7 +83,7 @@ class Options(dict):
 
     def __setitem__(self, key, value):
         if key not in self.__class__.__RESERVED_KEYS__:
-            if isinstance(key, types.StringTypes):
+            if isinstance(key, basestring):
                 if self.__class__.__ACCEPTABLE__.match(key):
                     setattr(self, key, value)
         return super(Options, self).__setitem__(key, value)
@@ -145,14 +148,11 @@ class defaults:
 class BaseChart(object):
     def __init__(self, *args, **kwargs): pass
 
-    def min(self, data):
-        return min(y for y in data if y is not None)
-
     def resolve_options(self, data, opt, ignore=[]):
         should_update_option = lambda opt_name: \
             getattr(opt, opt_name, False) is None and opt_name not in ignore
         # data may be [3,5,2] or [(1,3), (2,5), (3,2)]
-        if len(data) > 0 and isinstance(data[0], SequenceTypes):
+        if len(data) > 0 and isinstance(data[0], Sequence):
             data = [y for (x,y) in data]
 
         if should_update_option('chart_range_min'): 
@@ -165,11 +165,18 @@ class BaseChart(object):
 
         return opt
 
-
     def draw(self):
         raise NotImplemented("implement this is child class")
 
     def get_canvas_size(self, data, options):
+        raise NotImplemented("implement this is child class")
+
+    def min(self, data):
+        return min(y for y in data if y is not None)
+    
+    def compute_x(self, x, opt):
+        raise NotImplemented("implement this is child class")
+    def compute_y(self, y, opt):
         raise NotImplemented("implement this is child class")
 
 
@@ -180,7 +187,7 @@ class LineChart(BaseChart):
             if key not in opt:
                 opt[key] = default
 
-        if len(data) > 0 and isinstance(data[0], SequenceTypes):
+        if len(data) > 0 and isinstance(data[0], Sequence):
             data = [y for (x,y) in data]
             opt['xvalues'] = [x for (x,y) in data]
 
@@ -225,47 +232,53 @@ class LineChart(BaseChart):
         coords = self.get_coords(data, opt)
         draw = ImageDraw.Draw(image)
         if draw:
-            # fill normal range
-            if opt.normal_range_min and opt.normal_range_max and opt.normal_range_color:
-                y1 = self.compute_y(opt.normal_range_min, opt)
-                y2 = self.compute_y(opt.normal_range_max, opt)
-                normal_range = [coords[0][0],y1, coords[-1][0],y2]
-                draw.rectangle(normal_range, fill=opt.normal_range_color)
-
-            def draw_except_void(draw, xy, draw_func):
-                ''' draw except the None area '''
-                start = 0
-                for end in (i for i,c in enumerate(xy) if c[1] is None):
-                    draw_func(draw, xy[start:end])
-                    start = end+1
-                if xy[start:]:
-                    draw_func(draw, xy[start:])
-
-            # fill color
-            if opt.fill_color:
-                draw_poly = lambda draw, xy: draw.polygon([(xy[0][0],opt.chart_range_max)] + xy + [(xy[-1][0],opt.chart_range_max)], fill=opt.fill_color)
-                draw_except_void(draw, coords, draw_poly)
-
-            # draw line
-            draw_line = lambda draw, xy: draw.line(xy, fill=opt.line_color, width=opt.line_width)
-            draw_except_void(draw, coords, draw_line)
-
-            # draw spots
-            draw_spot = lambda draw, pt, color: \
-                draw.ellipse([pt[0]-opt.spot_radius, pt[1]-opt.spot_radius, pt[0]+opt.spot_radius, pt[1]+opt.spot_radius], fill=color)
-            if opt.min_spot_color:
-                draw_spot(draw, coords[data.index(self.min(data))], opt.min_spot_color)
-            if opt.max_spot_color:
-                draw_spot(draw, coords[data.index(max(data))], opt.max_spot_color)
-            if opt.spot_color:
-                last_xy = max((xy for xy in coords if xy[1] is not None), key=lambda (x,y): x)
-                draw_spot(draw, last_xy, opt.spot_color)
+            self._fill_normal_range(draw, coords, opt)
+            self._fill_color(draw, coords, opt)
+            self._draw_line(draw, coords, opt)
+            self._draw_spots(draw, data, coords, opt)
         del draw
 
         return image
 
 
+    def _fill_normal_range(self, _draw, coords, opt):
+        if opt.normal_range_min and opt.normal_range_max and opt.normal_range_color:
+            y1 = self.compute_y(opt.normal_range_min, opt)
+            y2 = self.compute_y(opt.normal_range_max, opt)
+            normal_range = [coords[0][0],y1, coords[-1][0],y2]
+            _draw.rectangle(normal_range, fill=opt.normal_range_color)
+        
 
+    def _draw_spots(self, _draw, data, coords, opt):
+        ''' last spot / min spot / max spot '''
+        draw_spot = lambda _draw, pt, color: \
+            _draw.ellipse([pt[0]-opt.spot_radius, pt[1]-opt.spot_radius, pt[0]+opt.spot_radius, pt[1]+opt.spot_radius], fill=color)
+        if opt.min_spot_color:
+            draw_spot(_draw, coords[data.index(self.min(data))], opt.min_spot_color)
+        if opt.max_spot_color:
+            draw_spot(_draw, coords[data.index(max(data))], opt.max_spot_color)
+        if opt.spot_color:
+            last_xy = max(((x,y) for (x,y) in coords if y is not None), key=lambda (x,y): x)
+            draw_spot(_draw, last_xy, opt.spot_color)
+
+    def _draw_except_void(self, _draw, coords, draw_func):
+        ''' draw except the None area '''
+        start = 0
+        for end in (i for i,(x,y) in enumerate(coords) if y is None):
+            draw_func(_draw, coords[start:end])
+            start = end+1
+        if coords[start:]:
+            draw_func(_draw, coords[start:])
+
+    def _fill_color(self, _draw, coords, opt):
+        if opt.fill_color:
+            draw_poly = lambda _draw, xy: _draw.polygon([(xy[0][0],opt.chart_range_max)] + xy + [(xy[-1][0],opt.chart_range_max)], fill=opt.fill_color)
+            self._draw_except_void(_draw, coords, draw_poly)
+
+    def _draw_line(self, _draw, coords, opt):
+        draw_line = lambda _draw, coords: _draw.line(coords, fill=opt.line_color, width=opt.line_width)
+        self._draw_except_void(_draw, coords, draw_line)
+        
 
 
 class BarChart(BaseChart):
@@ -303,7 +316,6 @@ class BarChart(BaseChart):
             if opt.get(key) is None:
                 opt[key] = default
 
-        #
         # zero axis
         min_data = self.chart.min(data)
 
@@ -317,7 +329,6 @@ class BarChart(BaseChart):
         # adjust height
         if min_data <= 0:
             opt['height'] += 1
-        ##
 
         return opt
 
@@ -351,10 +362,10 @@ class BarChart(BaseChart):
         # color map
         if opt.color_map is not None:
             # {-1: 'red', 0: 'green', 1: 'blue'}
-            if isinstance(opt.color_map, types.DictType):
+            if isinstance(opt.color_map, dict):
                 color = opt.color_map.get(y, color)
             # ['red', 'green', 'blue']
-            elif isinstance(opt.color_map, SequenceTypes):
+            elif isinstance(opt.color_map, Sequence):
                 if i < len(opt.color_map):
                     color = opt.color_map[i]
 
@@ -363,7 +374,6 @@ class BarChart(BaseChart):
 
     def draw(self, data, image, opt):
         draw = ImageDraw.Draw(image)
-        print opt
         if draw:
             _zero = self.chart.compute_axis(opt)
             for i,y in enumerate(data):
@@ -372,7 +382,6 @@ class BarChart(BaseChart):
 
                 _x = int(self.compute_x(i, opt))
                 _y = int(self.chart.compute_y(y, opt))
-
                 color = self.select_color(i,y, opt)
                 draw.rectangle([_x,_y, _x + opt.bar_width,_zero], fill=color)
         del draw
@@ -422,8 +431,6 @@ if __name__ == "__main__":
     import random
     #generate sort-of-random list
     d = [x*(random.random() - 0.2) for x in [10]*50]
-    #d = [3,1,2,-1,-2,3,0,2,-3]
-    d = [-0.4, 1.5, 0, 4.6, 0.9, -4.6, -0.3, -4.7, 1.3, 0.6, -4.2]
     #draw(d).save('/tmp/smooth.png')
     #draw(d).show()
     draw(d, type='bar', bar_width=2, height=20, zero_color="#000", zero_axis=True).show()

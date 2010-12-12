@@ -24,6 +24,7 @@ __license__ = "MIT"
 import Image, ImageDraw
 from collections import Sequence
 import re
+import optparse
 
 
 class Canvas:
@@ -102,50 +103,26 @@ class Options(dict):
         return Options(**super(Options, self).copy())
 Options.__RESERVED_KEYS__ = frozenset(dir(Options))
         
+class ColorType: pass
 
 class defaults:
-    common = Options(**{
-        'type'  : 'LineChart',
-        'width' : None,
-        'height': None,
-        'line_color': "#888888",
-        'fill_color': False,
-        'chart_range_min': None,
-        'chart_range_max': None,
-        #'composite': None, #?
-    })
-
-    line = Options(**{
-        'default_pixels_per_value': None,
-        'spot_color': '#f80',
-        'min_spot_color': '#f80',
-        'max_spot_color': '#f80',
-        'spot_radius': int(round(1.5)),
-        'line_width': 1,
-        'normal_range_min': None, 
-        'normal_range_max': None, 
-        'normal_range_color': '#ccc', 
-        'xvalues': None,
-        'chart_range_clip':   False, #?
-        'chart_range_clip_x': False, #?
-        'chart_range_min_x': None, #?
-        'chart_range_max_x': None, #?
-    })
-
-    bar = Options(**{
-        'bar_color': '#00f',     # Colour used for postive values
-        'neg_bar_color': '#f44', # Colour used for negative values
-        'zero_color': None,    # Colour used for values equal to zero
-        #'null_color': None,    #?
-        'bar_width': 4,        # Width of each bar, in pixels
-        'bar_spacing': 1,      # Space between each bar, in pixels
-        'zero_axis': None,     # Centers the y-axis at zero if true (default is to automatically do the right thing)
-        'color_map': None,     # Map override colors to certain values 
-    })
-
+    common = Options(**BaseChart.get_default_options())
+    line   = Options(**LineChart.get_default_options())
+    bar    = Options(**BarChart.get_default_options())
 
 
 class BaseChart(object):
+    OPTIONS = {
+        'type'  : {'LineChart': str},
+        'width' : {None: int},
+        'height': {None: int},
+        'line_color': {"#888888": ColorType},
+        'fill_color': {None: ColorType},
+        'chart_range_min': {None: int},
+        'chart_range_max': {None: int},
+        #'composite': {None: }, #?
+    }
+
     def __init__(self, *args, **kwargs): pass
 
     def resolve_options(self, data, opt, ignore=[]):
@@ -179,9 +156,37 @@ class BaseChart(object):
     def compute_y(self, y, opt):
         raise NotImplemented("implement this is child class")
 
+    @classmethod
+    def get_option_types(cls):
+        return dict((k,v.values()[0]) for k,v in cls.OPTIONS.items()))
+
+    @classmethod
+    def get_default_options(cls):
+        return dict((k,v.keys()[0]) for k,v in cls.OPTIONS.items())
+
+
 
 
 class LineChart(BaseChart):
+    # option_name : {default_value: type(s)}
+    OPTIONS = {
+        'default_pixels_per_value': {None: int},
+        'spot_color': {'#f80': ColorType},
+        'min_spot_color': {'#f80': [ColorType, bool]},
+        'max_spot_color': {'#f80': [ColorType, bool]},
+        'spot_radius': {1: int},
+        'line_width': {1: int},
+        'normal_range_min': {None: int}, 
+        'normal_range_max': {None: int}, 
+        'normal_range_color': {'#ccc': ColorType}, 
+        'xvalues': {None: Sequence},
+        #'chart_range_clip': {  False: }, #?
+        #'chart_range_clip_x': {False: }, #?
+        #'chart_range_min_x': {None: }, #?
+        #'chart_range_max_x': {None: }, #?
+    }
+
+
     def resolve_options(self, data, opt):
         for key, default in defaults.line.items():
             if key not in opt:
@@ -282,6 +287,16 @@ class LineChart(BaseChart):
 
 
 class BarChart(BaseChart):
+    OPTIONS = {
+        'bar_color'    : {'#00f': ColorType}, # Colour used for postive values
+        'neg_bar_color': {'#f44': ColorType}, # Colour used for negative values
+        'zero_color'   : {None: ColorType}, # Colour used for values equal to zero
+        'bar_width'    : {4: int},       # Width of each bar, in pixels
+        'bar_spacing'  : {1: int},       # Space between each bar, in pixels
+        'zero_axis'    : {None: bool},      # Centers the y-axis at zero if true (default is to automatically do the right thing)
+        'color_map'    : {None: [dict,Sequence]}, # Map override colors to certain values
+        #'null_color'  : {None: },          #?
+    }
 
     def __init__(self, data, opt):
         if self.axis_is_at_bottom(data, opt):
@@ -425,6 +440,16 @@ def draw(data, **options):
     ''' convenient function. calls sparkline.draw([1,2,3]) '''
     canvas = Canvas()
     return canvas.draw(data, **options)
+
+
+def parse_args(argv):
+    opts = (getattr(defaults, opt) for opt in dir(defaults))
+    opts = (opt for opt in opts if isinstance(opt, Options))
+   
+    if isinstance(getattr(defaults, opt, Options)]
+
+    parser = optparse.OptionParser()
+    parser.add_option
 
 
 if __name__ == "__main__":
